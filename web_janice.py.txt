@@ -1,0 +1,64 @@
+import gradio as gr
+import subprocess
+import os
+import yaml
+
+# 1. Automatically create the Parliament config file when the app starts
+config_dir = os.path.expanduser("~/.parliament")
+os.makedirs(config_dir, exist_ok=True)
+config_path = os.path.join(config_dir, "config.yaml")
+
+config_data = {
+    "parliament": {
+        "members": [
+            {"name": "Gemma-4", "provider": "openrouter", "model": "google/gemma-4-31b-it:free"},
+            {"name": "Nemotron-Lightning", "provider": "openrouter", "model": "nvidia/nemotron-3.5-lightning:free"},
+            {"name": "Ling-Flash", "provider": "openrouter", "model": "inclusionai/ling-3.2-flash:free"}
+        ],
+        "speaker": {
+            "name": "Judge-Nemotron-Ultra",
+            "provider": "openrouter",
+            "model": "nvidia/nemotron-3-ultra-550b-a55b:free"
+        }
+    }
+}
+
+with open(config_path, "w") as f:
+    yaml.dump(config_data, f)
+
+# 2. The function that runs when you click "Start Debate"
+def ask_janice(question):
+    try:
+        env = os.environ.copy()
+        result = subprocess.run(
+            ["parliament", "ask", question],
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=300
+        )
+        if result.returncode == 0:
+            return result.stdout
+        else:
+            return f"Parliament Error:\n{result.stderr}\n\nOutput:\n{result.stdout}"
+    except Exception as e:
+        return f"Unexpected Error: {str(e)}"
+
+# 3. Build the Web Interface
+with gr.Blocks(title="Janice AI") as demo:
+    gr.Markdown("# 🧠 Janice: Multi-Agent Debate Panel")
+    gr.Markdown("Ask a question. Janice will have her models debate it and synthesize a final answer.")
+    
+    with gr.Row():
+        inp = gr.Textbox(label="Your Question", placeholder="Should I expand my business?")
+    with gr.Row():
+        btn = gr.Button("Start Debate", variant="primary")
+    with gr.Row():
+        out = gr.Textbox(label="Janice's Verdict", lines=30)
+        
+    btn.click(fn=ask_janice, inputs=inp, outputs=out)
+
+# 4. Launch the app on Render's required port
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 7860))
+    demo.launch(server_name="0.0.0.0", server_port=port)
