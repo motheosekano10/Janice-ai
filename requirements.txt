@@ -3,3 +3,4 @@ git+https://github.com/elarmuzik1993/llm-parliament.git
 pyyaml
 gTTS
 SpeechRecognition
+openai
