@@ -7,7 +7,7 @@ import speech_recognition as sr
 from gtts import gTTS
 import tempfile
 
-# 1. Setup the Config (Business Panel + Dev Team)
+# 1. Setup the Config (Strictly 3 Members)
 config_dir = os.path.expanduser("~/.parliament")
 os.makedirs(config_dir, exist_ok=True)
 config_path = os.path.join(config_dir, "config.yaml")
@@ -17,9 +17,7 @@ config_data = {
         "members": [
             {"name": "Llama-3.3", "provider": "openrouter", "model": "meta-llama/llama-3.3-70b-instruct:free"},
             {"name": "Nemotron-Lightning", "provider": "openrouter", "model": "nvidia/nemotron-3.5-lightning:free"},
-            {"name": "Frontend-Dev", "provider": "openrouter", "model": "inclusionai/ling-3.2-flash:free"},
-            {"name": "Backend-Dev", "provider": "openrouter", "model": "nvidia/nemotron-3.5-lightning:free"},
-            {"name": "Security-Auditor", "provider": "openrouter", "model": "meta-llama/llama-3.3-70b-instruct:free"}
+            {"name": "Ling-Flash", "provider": "openrouter", "model": "inclusionai/ling-3.2-flash:free"}
         ],
         "speaker": {
             "name": "Lead-Architect",
@@ -71,10 +69,10 @@ def ask_janice(message, audio_path, history):
 
     full_prompt = f"{context}New Question: {message}" if context else message
 
-    # Run the Debate (with TERM=dumb for clean output)
+    # Run the Debate
     try:
         env = os.environ.copy()
-        env["TERM"] = "dumb"  # Critical for cloud environments
+        env["TERM"] = "dumb"
 
         result = subprocess.run(
             ["parliament", "ask", full_prompt],
@@ -112,7 +110,7 @@ def ask_janice(message, audio_path, history):
 # 4. Gradio Interface
 with gr.Blocks(title="Janice AI") as demo:
     gr.Markdown("# 🧠 Janice: Multi-Agent Debate Panel")
-    gr.Markdown("Type or speak your question. Janice has a **Business Panel** and a **Dev Team** ready to debate.")
+    gr.Markdown("Type or speak your question. Janice is ready to debate.")
     
     chatbot = gr.Chatbot(label="Janice's Deliberations", height=500)
     
@@ -126,7 +124,7 @@ with gr.Blocks(title="Janice AI") as demo:
         submit_btn = gr.Button("Start Debate", variant="primary")
         
     with gr.Row():
-        # NO autoplay - you press play manually
+        # Manual audio playback
         audio_out = gr.Audio(label="Listen to Verdict", interactive=True)
         
     submit_btn.click(
