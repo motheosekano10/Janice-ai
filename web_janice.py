@@ -7,7 +7,7 @@ import speech_recognition as sr
 from gtts import gTTS
 import tempfile
 
-# 1. Setup the Config (Including the Dev Team)
+# 1. Setup the Config (Business Panel + Dev Team)
 config_dir = os.path.expanduser("~/.parliament")
 os.makedirs(config_dir, exist_ok=True)
 config_path = os.path.join(config_dir, "config.yaml")
@@ -15,10 +15,8 @@ config_path = os.path.join(config_dir, "config.yaml")
 config_data = {
     "parliament": {
         "members": [
-            # General Business Panel
             {"name": "Llama-3.3", "provider": "openrouter", "model": "meta-llama/llama-3.3-70b-instruct:free"},
             {"name": "Nemotron-Lightning", "provider": "openrouter", "model": "nvidia/nemotron-3.5-lightning:free"},
-            # Dev Team
             {"name": "Frontend-Dev", "provider": "openrouter", "model": "inclusionai/ling-3.2-flash:free"},
             {"name": "Backend-Dev", "provider": "openrouter", "model": "nvidia/nemotron-3.5-lightning:free"},
             {"name": "Security-Auditor", "provider": "openrouter", "model": "meta-llama/llama-3.3-70b-instruct:free"}
@@ -34,7 +32,7 @@ config_data = {
 with open(config_path, "w") as f:
     yaml.dump(config_data, f)
 
-# 2. Helper to clean the ASCII terminal boxes
+# 2. Helper to clean terminal ASCII boxes
 def clean_terminal_output(raw_text):
     cleaned = re.sub(r'[│╭╮╰╯─]', '', raw_text)
     if "Parliament Verdict" in cleaned:
@@ -43,9 +41,9 @@ def clean_terminal_output(raw_text):
         return "### 🏛️ Janice's Final Verdict\n" + verdict_section.strip()
     return cleaned
 
-# 3. The main function (Handles Text, Voice Input, and Voice Output)
+# 3. Main Function (Handles Text, Voice Input, Voice Output, and Chat History)
 def ask_janice(message, audio_path, history):
-    # Step A: Transcribe Audio if provided
+    # Step A: Transcribe Audio
     if audio_path:
         recognizer = sr.Recognizer()
         try:
@@ -53,18 +51,25 @@ def ask_janice(message, audio_path, history):
                 audio_data = recognizer.record(source)
                 message = recognizer.recognize_google(audio_data)
         except Exception as e:
-            return history + [[None, f"❌ Error transcribing audio: {e}"]], None
+            # Return error message in the correct dictionary format
+            history.append({"role": "user", "content": "🎤 [Audio Input]"})
+            history.append({"role": "assistant", "content": f"❌ Error transcribing audio: {e}"})
+            return history, None
 
     if not message:
-        return history + [[None, "Please provide a question via text or microphone."]], None
+        history.append({"role": "user", "content": "..."})
+        history.append({"role": "assistant", "content": "Please provide a question via text or microphone."})
+        return history, None
 
-    # Step B: Build Conversation Context
+    # Step B: Build Context from history (Extracting 'content' from dicts)
     context = ""
     if history:
         context = "Previous conversation:\n"
-        for user_msg, ai_msg in history[-2:]:
-            context += f"User: {user_msg}\nAI: {str(ai_msg)[:500]}...\n\n"
-    
+        for msg in history[-4:]: # Look at last 4 messages
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+            context += f"{role.capitalize()}: {str(content)[:500]}...\n"
+
     full_prompt = f"{context}New Question: {message}" if context else message
 
     # Step C: Run the Debate
@@ -79,31 +84,32 @@ def ask_janice(message, audio_path, history):
     except Exception as e:
         clean_output = f"**Unexpected Error:** {str(e)}"
 
-    # Step D: Generate Voice Output (TTS)
+    # Step D: Generate Voice Output
     audio_filepath = None
     try:
-        # Extract just the recommendation text for the voice
         voice_text = clean_output.split("Recommendation")[-1].strip() if "Recommendation" in clean_output else clean_output
         if not voice_text:
-            voice_text = "The debate is complete. Please read the verdict on screen."
-            
-        tts = gTTS(text=voice_text[:1000], lang='en') # Limit to 1000 chars for speed
+            voice_text = "The debate is complete."
+        tts = gTTS(text=voice_text[:1000], lang='en')
         temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
         tts.save(temp_file.name)
         audio_filepath = temp_file.name
     except Exception as e:
         print(f"TTS Error: {e}")
 
-    # Step E: Update Chat History
-    history.append([message, clean_output])
+    # Step E: Update Chat History (Using DICTIONARY format)
+    history.append({"role": "user", "content": message})
+    history.append({"role": "assistant", "content": clean_output})
+    
     return history, audio_filepath
 
-# 4. Custom UI (Chat + Audio Input + Audio Output)
+# 4. Custom UI
 with gr.Blocks(title="Janice AI", theme=gr.themes.Soft()) as demo:
     gr.Markdown("# 🧠 Janice: Multi-Agent Debate Panel")
     gr.Markdown("Type or speak your question. Janice has a **Business Panel** and a **Dev Team** ready to debate.")
     
-    chatbot = gr.Chatbot(label="Janice's Deliberations", height=500)
+    # Set type="messages" to explicitly tell Gradio 6 to use the dictionary format
+    chatbot = gr.Chatbot(label="Janice's Deliberations", height=500, type="messages")
     
     with gr.Row():
         with gr.Column(scale=4):
@@ -117,14 +123,14 @@ with gr.Blocks(title="Janice AI", theme=gr.themes.Soft()) as demo:
     with gr.Row():
         audio_out = gr.Audio(label="Listen to Verdict", autoplay=True)
         
-    # Trigger on button click
+    # Trigger function
     submit_btn.click(
         fn=ask_janice, 
         inputs=[text_in, audio_in, chatbot], 
         outputs=[chatbot, audio_out]
     )
     
-    # Clear the textbox and audio input after sending
+    # Clear inputs after submission
     submit_btn.click(lambda: (None, None), outputs=[text_in, audio_in])
 
 # 5. Launch
