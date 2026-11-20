@@ -51,7 +51,6 @@ def ask_janice(message, audio_path, history):
                 audio_data = recognizer.record(source)
                 message = recognizer.recognize_google(audio_data)
         except Exception as e:
-            # Return error message in the correct dictionary format
             history.append({"role": "user", "content": "🎤 [Audio Input]"})
             history.append({"role": "assistant", "content": f"❌ Error transcribing audio: {e}"})
             return history, None
@@ -61,11 +60,11 @@ def ask_janice(message, audio_path, history):
         history.append({"role": "assistant", "content": "Please provide a question via text or microphone."})
         return history, None
 
-    # Step B: Build Context from history (Extracting 'content' from dicts)
+    # Step B: Build Context from history
     context = ""
     if history:
         context = "Previous conversation:\n"
-        for msg in history[-4:]: # Look at last 4 messages
+        for msg in history[-4:]:
             role = msg.get("role", "user")
             content = msg.get("content", "")
             context += f"{role.capitalize()}: {str(content)[:500]}...\n"
@@ -97,19 +96,19 @@ def ask_janice(message, audio_path, history):
     except Exception as e:
         print(f"TTS Error: {e}")
 
-    # Step E: Update Chat History (Using DICTIONARY format)
+    # Step E: Update Chat History
     history.append({"role": "user", "content": message})
     history.append({"role": "assistant", "content": clean_output})
     
     return history, audio_filepath
 
 # 4. Custom UI
-with gr.Blocks(title="Janice AI", theme=gr.themes.Soft()) as demo:
+with gr.Blocks(title="Janice AI") as demo:
     gr.Markdown("# 🧠 Janice: Multi-Agent Debate Panel")
     gr.Markdown("Type or speak your question. Janice has a **Business Panel** and a **Dev Team** ready to debate.")
     
-    # Set type="messages" to explicitly tell Gradio 6 to use the dictionary format
-    chatbot = gr.Chatbot(label="Janice's Deliberations", height=500, type="messages")
+    # Removed type="messages" as it's no longer supported in Gradio 6.x
+    chatbot = gr.Chatbot(label="Janice's Deliberations", height=500)
     
     with gr.Row():
         with gr.Column(scale=4):
@@ -136,4 +135,5 @@ with gr.Blocks(title="Janice AI", theme=gr.themes.Soft()) as demo:
 # 5. Launch
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 7860))
-    demo.launch(server_name="0.0.0.0", server_port=port)
+    # Moved theme to launch() as required by Gradio 6.x
+    demo.launch(server_name="0.0.0.0", server_port=port, theme=gr.themes.Soft())
