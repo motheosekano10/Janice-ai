@@ -44,15 +44,12 @@ def search_tenders(keyword: str):
     """Scrapes the SA eTenders website for a keyword."""
     print(f"🔧 Running tool: search_tenders('{keyword}')")
     try:
-        # Note: This is a simplified example. The real eTenders site might require POST requests or JS rendering.
-        # For production, use the 'sa-tenders' package or Apify API.
         url = f"https://www.etenders.gov.za/Home/opportunities?search={keyword}"
         headers = {'User-Agent': 'Mozilla/5.0'}
         response = requests.get(url, headers=headers, timeout=10)
         
         if response.status_code == 200:
             soup = BeautifulSoup(response.text, 'html.parser')
-            # Extract tender titles (this selector will need adjusting based on the actual site structure)
             tenders = soup.find_all('h3', limit=5) 
             if not tenders:
                 return f"Found the page for '{keyword}', but could not extract specific tender titles. You may need to visit manually."
@@ -138,8 +135,9 @@ def ask_janice(message, audio_path, history):
         # Run Standard Chat with Tool Calling
         try:
             # First call: Ask the model. It might respond directly or ask to use a tool.
+            # 🔥 CHANGED MODEL HERE TO A RELIABLE FREE ALTERNATIVE
             response = client.chat.completions.create(
-                model="meta-llama/llama-3.3-70b-instruct:free",
+                model="nvidia/nemotron-3.5-lightning:free", 
                 messages=messages,
                 tools=tools_schema,
                 tool_choice="auto",
@@ -169,7 +167,7 @@ def ask_janice(message, audio_path, history):
                 
                 # Second call: Send the tool results back so the model can formulate the final answer
                 second_response = client.chat.completions.create(
-                    model="meta-llama/llama-3.3-70b-instruct:free",
+                    model="nvidia/nemotron-3.5-lightning:free",
                     messages=messages,
                     timeout=60
                 )
