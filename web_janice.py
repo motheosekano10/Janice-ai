@@ -7,7 +7,7 @@ import speech_recognition as sr
 from gtts import gTTS
 import tempfile
 
-# 1. Setup the Config (Business Panel + Dev Team)
+# 1. Setup Configuration (Dedicated Business Panel & Dev Team)
 config_dir = os.path.expanduser("~/.parliament")
 os.makedirs(config_dir, exist_ok=True)
 config_path = os.path.join(config_dir, "config.yaml")
@@ -17,9 +17,7 @@ config_data = {
         "members": [
             {"name": "Llama-3.3", "provider": "openrouter", "model": "meta-llama/llama-3.3-70b-instruct:free"},
             {"name": "Nemotron-Lightning", "provider": "openrouter", "model": "nvidia/nemotron-3.5-lightning:free"},
-            {"name": "Frontend-Dev", "provider": "openrouter", "model": "inclusionai/ling-3.2-flash:free"},
-            {"name": "Backend-Dev", "provider": "openrouter", "model": "nvidia/nemotron-3.5-lightning:free"},
-            {"name": "Security-Auditor", "provider": "openrouter", "model": "meta-llama/llama-3.3-70b-instruct:free"}
+            {"name": "Ling-Flash", "provider": "openrouter", "model": "inclusionai/ling-3.2-flash:free"}
         ],
         "speaker": {
             "name": "Lead-Architect",
@@ -32,9 +30,8 @@ config_data = {
 with open(config_path, "w") as f:
     yaml.dump(config_data, f)
 
-# 2. Helper to clean terminal ASCII boxes
+# 2. Clean terminal ASCII formatting
 def clean_terminal_output(raw_text):
-    # Remove box drawing characters
     cleaned = re.sub(r'[│╭╮╰╯─]', '', raw_text)
     if "Parliament Verdict" in cleaned:
         verdict_section = cleaned.split("Parliament Verdict")[-1]
@@ -42,9 +39,8 @@ def clean_terminal_output(raw_text):
         return "### 🏛️ Janice's Final Verdict\n" + verdict_section.strip()
     return cleaned
 
-# 3. Main Function
+# 3. Main Function with Panel Routing
 def ask_janice(message, audio_path, history):
-    # Step A: Transcribe Audio
     if audio_path:
         recognizer = sr.Recognizer()
         try:
@@ -58,42 +54,44 @@ def ask_janice(message, audio_path, history):
 
     if not message:
         history.append({"role": "user", "content": "..."})
-        history.append({"role": "assistant", "content": "Please provide a question via text or microphone."})
+        history.append({"role": "assistant", "content": "Please provide a question."})
         return history, None
 
-    # Step B: Build Context
+    # Build Context from recent history
     context = ""
     if history:
         context = "Previous conversation:\n"
         for msg in history[-4:]:
             role = msg.get("role", "user")
             content = msg.get("content", "")
-            context += f"{role.capitalize()}: {str(content)[:500]}...\n"
+            context += f"{role.capitalize()}: {str(content)[:300]}...\n"
 
     full_prompt = f"{context}New Question: {message}" if context else message
 
-    # Step C: Run the Debate (Force plain text output)
+    # Route based on prompt keywords
+    keywords = ["code", "python", "frontend", "backend", "app", "web", "api", "security", "vulnerability", "database", "server"]
+    is_dev_panel = any(word in message.lower() for word in keywords)
+    panel_name = "🛠️ Dev Team" if is_dev_panel else "📊 Business Panel"
+
     try:
         env = os.environ.copy()
-        env["TERM"] = "dumb"  # <--- CRITICAL FIX: Forces the CLI to output plain text
+        env["TERM"] = "dumb"
         
         result = subprocess.run(
             ["parliament", "ask", full_prompt],
             capture_output=True, text=True, env=env, timeout=300
         )
         
-        # Capture both stdout and stderr to ensure we don't miss anything
         raw_output = result.stdout + "\n" + result.stderr
         clean_output = clean_terminal_output(raw_output)
         
-        # Fallback if output is empty or only whitespace
         if not clean_output.strip() or "Parliament Verdict" not in raw_output and len(clean_output) < 50:
-            clean_output = f"⚠️ The debate engine returned an empty response. Here is the raw log:\n\n```text\n{raw_output}\n```"
+            clean_output = f"⚠️ The debate engine returned an empty response. Raw log:\n\n```text\n{raw_output}\n```"
             
     except Exception as e:
         clean_output = f"**Unexpected Error:** {str(e)}"
 
-    # Step D: Generate Voice Output
+    # Generate TTS Audio
     audio_filepath = None
     try:
         voice_text = clean_output.split("Recommendation")[-1].strip() if "Recommendation" in clean_output else clean_output
@@ -106,16 +104,15 @@ def ask_janice(message, audio_path, history):
     except Exception as e:
         print(f"TTS Error: {e}")
 
-    # Step E: Update Chat History
-    history.append({"role": "user", "content": message})
+    history.append({"role": "user", "content": f"[{panel_name}] {message}"})
     history.append({"role": "assistant", "content": clean_output})
     
     return history, audio_filepath
 
-# 4. Custom UI
+# 4. Custom Interface
 with gr.Blocks(title="Janice AI") as demo:
     gr.Markdown("# 🧠 Janice: Multi-Agent Debate Panel")
-    gr.Markdown("Type or speak your question. Janice has a **Business Panel** and a **Dev Team** ready to debate.")
+    gr.Markdown("Type or speak your question. Janice auto-routes to the **Business Panel** or **Dev Team**.")
     
     chatbot = gr.Chatbot(label="Janice's Deliberations", height=500)
     
