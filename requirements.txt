@@ -4,3 +4,5 @@ pyyaml
 gTTS
 SpeechRecognition
 openai
+requests
+beautifulsoup4
