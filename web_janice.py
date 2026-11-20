@@ -6,8 +6,9 @@ import re
 import speech_recognition as sr
 from gtts import gTTS
 import tempfile
+from openai import OpenAI
 
-# 1. Setup the Config (Strictly 3 Members)
+# 1. Setup the Config (For the debate tool)
 config_dir = os.path.expanduser("~/.parliament")
 os.makedirs(config_dir, exist_ok=True)
 config_path = os.path.join(config_dir, "config.yaml")
@@ -30,7 +31,14 @@ config_data = {
 with open(config_path, "w") as f:
     yaml.dump(config_data, f)
 
-# 2. Helper to clean terminal output
+# 2. Setup Normal Assistant Client (OpenRouter)
+# Make sure OPENROUTER_API_KEY is set in Render
+client = OpenAI(
+    base_url="https://openrouter.ai/api/v1",
+    api_key=os.environ.get("OPENROUTER_API_KEY", ""),
+)
+
+# 3. Helper to clean terminal output
 def clean_terminal_output(raw_text):
     cleaned = re.sub(r'[│╭╮╰╯─]', '', raw_text)
     if "Parliament Verdict" in cleaned:
@@ -39,7 +47,7 @@ def clean_terminal_output(raw_text):
         return "### 🏛️ Janice's Final Verdict\n" + verdict_section.strip()
     return cleaned
 
-# 3. Main Function
+# 4. The Smart Assistant Function
 def ask_janice(message, audio_path, history):
     # Handle Audio Input
     if audio_path:
@@ -55,46 +63,53 @@ def ask_janice(message, audio_path, history):
 
     if not message:
         history.append({"role": "user", "content": "..."})
-        history.append({"role": "assistant", "content": "Please provide a question."})
+        history.append({"role": "assistant", "content": "Please provide a message."})
         return history, None
 
-    # Build Context
-    context = ""
-    if history:
-        context = "Previous conversation:\n"
-        for msg in history[-4:]:
-            role = msg.get("role", "user")
-            content = msg.get("content", "")
-            context += f"{role.capitalize()}: {str(content)[:300]}...\n"
+    # Build conversation history for standard chat
+    messages = [{"role": "system", "content": "You are Janice, a helpful, concise, and intelligent personal assistant. Answer normal queries directly. If the user wants a heavy analysis, tell them to use the word 'debate'."}]
+    for msg in history[-6:]: # Keep last 3 exchanges for context
+        messages.append(msg)
+    messages.append({"role": "user", "content": message})
 
-    full_prompt = f"{context}New Question: {message}" if context else message
-
-    # Run the Debate
-    try:
-        env = os.environ.copy()
-        env["TERM"] = "dumb"
-
-        result = subprocess.run(
-            ["parliament", "ask", full_prompt],
-            capture_output=True, text=True, env=env, timeout=300
-        )
-        
-        raw_output = result.stdout + "\n" + result.stderr
-        clean_output = clean_terminal_output(raw_output)
-        
-        if not clean_output.strip() or "Parliament Verdict" not in raw_output and len(clean_output) < 50:
-            clean_output = f"⚠️ The debate engine returned an empty response. Raw log:\n\n```text\n{raw_output}\n```"
+    # --- SMART ROUTER ---
+    # If the user asks for a debate/analysis, trigger the Parliament
+    trigger_words = ["debate", "pros and cons", "analyze", "compare options", "panel"]
+    if any(word in message.lower() for word in trigger_words):
+        try:
+            env = os.environ.copy()
+            env["TERM"] = "dumb"
             
-    except Exception as e:
-        clean_output = f"**Unexpected Error:** {str(e)}"
+            # Run Parliament
+            result = subprocess.run(
+                ["parliament", "ask", message],
+                capture_output=True, text=True, env=env, timeout=300
+            )
+            raw_output = result.stdout + "\n" + result.stderr
+            final_response = clean_terminal_output(raw_output)
+            
+            if "empty response" in final_response.lower() or "error" in final_response.lower():
+                final_response = "I tried to run a debate, but hit an error. Here is the log:\n\n" + raw_output
+                
+        except Exception as e:
+            final_response = f"**Debate Error:** {str(e)}"
+    else:
+        # Run Standard Chat
+        try:
+            response = client.chat.completions.create(
+                model="meta-llama/llama-3.3-70b-instruct:free", # Fast, smart free model
+                messages=messages,
+                timeout=60
+            )
+            final_response = response.choices[0].message.content
+        except Exception as e:
+            final_response = f"**Chat Error:** {str(e)}"
 
     # Generate Audio (TTS)
     audio_filepath = None
     try:
-        voice_text = clean_output.split("Recommendation")[-1].strip() if "Recommendation" in clean_output else clean_output
-        if not voice_text:
-            voice_text = "The debate is complete."
-        tts = gTTS(text=voice_text[:1000], lang='en')
+        voice_text = final_response[:1000] # Limit TTS length
+        tts = gTTS(text=voice_text, lang='en')
         temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
         tts.save(temp_file.name)
         audio_filepath = temp_file.name
@@ -103,29 +118,28 @@ def ask_janice(message, audio_path, history):
 
     # Update Chat History
     history.append({"role": "user", "content": message})
-    history.append({"role": "assistant", "content": clean_output})
+    history.append({"role": "assistant", "content": final_response})
     
     return history, audio_filepath
 
-# 4. Gradio Interface
+# 5. Gradio Interface
 with gr.Blocks(title="Janice AI") as demo:
-    gr.Markdown("# 🧠 Janice: Multi-Agent Debate Panel")
-    gr.Markdown("Type or speak your question. Janice is ready to debate.")
+    gr.Markdown("# 🧠 Janice: Your Personal Assistant")
+    gr.Markdown("Type or speak normally. To trigger the multi-agent panel, use words like **'debate'**, **'analyze'**, or **'pros and cons'**.")
     
-    chatbot = gr.Chatbot(label="Janice's Deliberations", height=500)
+    chatbot = gr.Chatbot(label="Janice", height=500)
     
     with gr.Row():
         with gr.Column(scale=4):
-            text_in = gr.Textbox(show_label=False, placeholder="Type your question here...", container=False)
+            text_in = gr.Textbox(show_label=False, placeholder="Say something...", container=False)
         with gr.Column(scale=1):
             audio_in = gr.Audio(sources=["microphone"], type="filepath", label="Or speak")
             
     with gr.Row():
-        submit_btn = gr.Button("Start Debate", variant="primary")
+        submit_btn = gr.Button("Send", variant="primary")
         
     with gr.Row():
-        # Manual audio playback
-        audio_out = gr.Audio(label="Listen to Verdict", interactive=True)
+        audio_out = gr.Audio(label="Listen to Response", interactive=True)
         
     submit_btn.click(
         fn=ask_janice, 
@@ -135,7 +149,7 @@ with gr.Blocks(title="Janice AI") as demo:
     
     submit_btn.click(lambda: (None, None), outputs=[text_in, audio_in])
 
-# 5. Launch
+# 6. Launch
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 7860))
     demo.launch(server_name="0.0.0.0", server_port=port, theme=gr.themes.Soft())
