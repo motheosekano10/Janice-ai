@@ -1,45 +1,52 @@
 import gradio as gr
-import subprocess
 import os
 import yaml
-import re
 import speech_recognition as sr
 from gtts import gTTS
 import tempfile
+import re
 
-# 1. Setup Config with Reliable Free Models
-config_dir = os.path.expanduser("~/.parliament")
-os.makedirs(config_dir, exist_ok=True)
-config_path = os.path.join(config_dir, "config.yaml")
+# 1. Import Zeline Agent and Tools
+from zeline import Agent
+try:
+    from sa_tenders import sa_tenders
+except ImportError:
+    sa_tenders = None
 
-config_data = {
-    "parliament": {
-        "members": [
-            {"name": "Nemotron-Lightning", "provider": "openrouter", "model": "nvidia/nemotron-3.5-lightning:free"},
-            {"name": "Nemotron-Ultra", "provider": "openrouter", "model": "nvidia/nemotron-3-ultra-550b-a55b:free"}
-        ],
-        "speaker": {
-            "name": "Lead-Architect",
-            "provider": "openrouter",
-            "model": "nvidia/nemotron-3-ultra-550b-a55b:free"
-        }
-    }
-}
+# 2. Define the Tender Discovery Tool
+def find_tenders(keyword: str, start_date: str = "2026-01-01"):
+    """
+    Finds government tenders on the South African eTenders portal.
+    Args:
+        keyword: The search term (e.g., "IT services", "construction").
+        start_date: The earliest date for tenders (YYYY-MM-DD).
+    """
+    if not sa_tenders:
+        return "Tender tool is currently unavailable. Please check library installation."
+        
+    print(f"🔧 Using tool: find_tenders(keyword='{keyword}', start_date='{start_date}')")
+    try:
+        source = sa_tenders(
+            page_size=50,
+            start_date=start_date,
+            end_date="2026-12-31"
+        )
+        clean_data = source.cleaned_dataframe
+        filtered_tenders = clean_data[clean_data['description'].str.contains(keyword, case=False, na=False)]
+        
+        if filtered_tenders.empty:
+            return f"No tenders found for '{keyword}' after {start_date}."
+        
+        summary = "Found the following tenders:\n"
+        for index, row in filtered_tenders.head(3).iterrows():
+            summary += f"- {row['description']} (Closing: {row['closing_date']})\n"
+        return summary
+    except Exception as e:
+        return f"Error fetching tenders: {str(e)}"
 
-with open(config_path, "w") as f:
-    yaml.dump(config_data, f)
-
-# 2. Helper to clean terminal output
-def clean_terminal_output(raw_text):
-    cleaned = re.sub(r'[│╭╮╰╯─]', '', raw_text)
-    if "Parliament Verdict" in cleaned:
-        verdict_section = cleaned.split("Parliament Verdict")[-1]
-        verdict_section = re.sub(r'\n\s*\n', '\n\n', verdict_section)
-        return "### 🏛️ Janice's Final Verdict\n" + verdict_section.strip()
-    return cleaned
-
-# 3. Main Function with Retry Logic
+# 3. Main Agentic Function
 def ask_janice(message, audio_path, history):
+    # Handle Audio Input
     if audio_path:
         recognizer = sr.Recognizer()
         try:
@@ -47,90 +54,67 @@ def ask_janice(message, audio_path, history):
                 audio_data = recognizer.record(source)
                 message = recognizer.recognize_google(audio_data)
         except Exception as e:
-            history.append({"role": "user", "content": "🎤 [Audio Input]"})
-            history.append({"role": "assistant", "content": f"❌ Error transcribing audio: {e}"})
+            history.append({"role": "assistant", "content": f"❌ Audio error: {e}"})
             return history, None
 
     if not message:
-        history.append({"role": "user", "content": "..."})
-        history.append({"role": "assistant", "content": "Please provide a question."})
+        history.append({"role": "assistant", "content": "Please provide a question or command."})
         return history, None
 
-    # Build Context
-    context = ""
-    if history:
-        context = "Previous conversation:\n"
-        for msg in history[-4:]:
-            role = msg.get("role", "user")
-            content = msg.get("content", "")
-            context += f"{role.capitalize()}: {str(content)[:300]}...\n"
+    # Initialize the Agent (Using OpenRouter as the backend)
+    # Zeline uses LiteLLM, which supports OpenRouter natively via the model string
+    agent = Agent(
+        model="openrouter/meta-llama/llama-3.3-70b-instruct:free",
+        tools=[find_tenders]
+    )
 
-    full_prompt = f"{context}New Question: {message}" if context else message
-
-    # Run Debate with Retry
+    # Run the agent
     try:
-        env = os.environ.copy()
-        env["TERM"] = "dumb"
+        # The agent will decide if it needs to use the find_tenders tool
+        response = agent.run(message)
+        final_text = str(response)
+
+        # Generate Audio (TTS)
+        audio_filepath = None
+        try:
+            tts = gTTS(text=final_text[:1500], lang='en') # Limit to 1500 chars for speed
+            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
+            tts.save(temp_file.name)
+            audio_filepath = temp_file.name
+        except Exception as e:
+            print(f"TTS Error: {e}")
+
+        history.append({"role": "user", "content": message})
+        history.append({"role": "assistant", "content": final_text})
         
-        # Try up to 2 times if we get a rate limit error
-        for attempt in range(2):
-            result = subprocess.run(
-                ["parliament", "ask", full_prompt],
-                capture_output=True, text=True, env=env, timeout=300
-            )
-            raw_output = result.stdout + "\n" + result.stderr
-            
-            if "Rate limit or quota exceeded" in raw_output and attempt == 0:
-                print(f"Rate limit hit (attempt {attempt+1}). Retrying in 5 seconds...")
-                import time
-                time.sleep(5)
-                continue
-            break
-            
-        clean_output = clean_terminal_output(raw_output)
-        
-        if not clean_output.strip() or "Parliament Verdict" not in raw_output and len(clean_output) < 50:
-            clean_output = f"⚠️ The debate engine returned an empty response. Raw log:\n\n```text\n{raw_output}\n```"
-            
+        # Return audio_filepath. The UI will NOT autoplay it.
+        return history, audio_filepath
+
     except Exception as e:
-        clean_output = f"**Unexpected Error:** {str(e)}"
+        error_msg = f"**Agent Error:** {str(e)}"
+        history.append({"role": "user", "content": message})
+        history.append({"role": "assistant", "content": error_msg})
+        return history, None
 
-    # Generate TTS Audio
-    audio_filepath = None
-    try:
-        voice_text = clean_output.split("Recommendation")[-1].strip() if "Recommendation" in clean_output else clean_output
-        if not voice_text:
-            voice_text = "The debate is complete."
-        tts = gTTS(text=voice_text[:1000], lang='en')
-        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
-        tts.save(temp_file.name)
-        audio_filepath = temp_file.name
-    except Exception as e:
-        print(f"TTS Error: {e}")
-
-    history.append({"role": "user", "content": message})
-    history.append({"role": "assistant", "content": clean_output})
+# 4. Gradio Interface
+with gr.Blocks(title="Janice AI Agent") as demo:
+    gr.Markdown("# 🧠 Janice: Your Autonomous Assistant")
+    gr.Markdown("Ask me to find tenders, research the web, or automate tasks.")
     
-    return history, audio_filepath
-
-# 4. UI
-with gr.Blocks(title="Janice AI") as demo:
-    gr.Markdown("# 🧠 Janice: Multi-Agent Debate Panel")
-    gr.Markdown("Type or speak your question. Janice uses the **NVIDIA Nemotron** panel for reliable free debates.")
-    
-    chatbot = gr.Chatbot(label="Janice's Deliberations", height=500)
+    chatbot = gr.Chatbot(label="Janice's Activity Log", height=500)
     
     with gr.Row():
         with gr.Column(scale=4):
-            text_in = gr.Textbox(show_label=False, placeholder="Type your question here...", container=False)
+            text_in = gr.Textbox(show_label=False, placeholder="Type your command here...", container=False)
         with gr.Column(scale=1):
             audio_in = gr.Audio(sources=["microphone"], type="filepath", label="Or speak")
             
     with gr.Row():
-        submit_btn = gr.Button("Start Debate", variant="primary")
+        submit_btn = gr.Button("Execute", variant="primary")
         
     with gr.Row():
-        audio_out = gr.Audio(label="Listen to Verdict", autoplay=True)
+        # Notice: autoplay is NOT here. You must click play manually.
+        audio_out = gr.Audio(label="Listen to Verdict", interactive=True)
         
     submit_btn.click(
         fn=ask_janice, 
@@ -138,6 +122,7 @@ with gr.Blocks(title="Janice AI") as demo:
         outputs=[chatbot, audio_out]
     )
     
+    # Clear inputs after submission
     submit_btn.click(lambda: (None, None), outputs=[text_in, audio_in])
 
 # 5. Launch
