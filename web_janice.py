@@ -7,7 +7,7 @@ import speech_recognition as sr
 from gtts import gTTS
 import tempfile
 
-# 1. Setup Configuration (Dedicated Business Panel & Dev Team)
+# 1. Setup Config with Reliable Free Models
 config_dir = os.path.expanduser("~/.parliament")
 os.makedirs(config_dir, exist_ok=True)
 config_path = os.path.join(config_dir, "config.yaml")
@@ -15,9 +15,8 @@ config_path = os.path.join(config_dir, "config.yaml")
 config_data = {
     "parliament": {
         "members": [
-            {"name": "Llama-3.3", "provider": "openrouter", "model": "meta-llama/llama-3.3-70b-instruct:free"},
             {"name": "Nemotron-Lightning", "provider": "openrouter", "model": "nvidia/nemotron-3.5-lightning:free"},
-            {"name": "Ling-Flash", "provider": "openrouter", "model": "inclusionai/ling-3.2-flash:free"}
+            {"name": "Nemotron-Ultra", "provider": "openrouter", "model": "nvidia/nemotron-3-ultra-550b-a55b:free"}
         ],
         "speaker": {
             "name": "Lead-Architect",
@@ -30,7 +29,7 @@ config_data = {
 with open(config_path, "w") as f:
     yaml.dump(config_data, f)
 
-# 2. Clean terminal ASCII formatting
+# 2. Helper to clean terminal output
 def clean_terminal_output(raw_text):
     cleaned = re.sub(r'[│╭╮╰╯─]', '', raw_text)
     if "Parliament Verdict" in cleaned:
@@ -39,7 +38,7 @@ def clean_terminal_output(raw_text):
         return "### 🏛️ Janice's Final Verdict\n" + verdict_section.strip()
     return cleaned
 
-# 3. Main Function with Panel Routing
+# 3. Main Function with Retry Logic
 def ask_janice(message, audio_path, history):
     if audio_path:
         recognizer = sr.Recognizer()
@@ -57,7 +56,7 @@ def ask_janice(message, audio_path, history):
         history.append({"role": "assistant", "content": "Please provide a question."})
         return history, None
 
-    # Build Context from recent history
+    # Build Context
     context = ""
     if history:
         context = "Previous conversation:\n"
@@ -68,21 +67,26 @@ def ask_janice(message, audio_path, history):
 
     full_prompt = f"{context}New Question: {message}" if context else message
 
-    # Route based on prompt keywords
-    keywords = ["code", "python", "frontend", "backend", "app", "web", "api", "security", "vulnerability", "database", "server"]
-    is_dev_panel = any(word in message.lower() for word in keywords)
-    panel_name = "🛠️ Dev Team" if is_dev_panel else "📊 Business Panel"
-
+    # Run Debate with Retry
     try:
         env = os.environ.copy()
         env["TERM"] = "dumb"
         
-        result = subprocess.run(
-            ["parliament", "ask", full_prompt],
-            capture_output=True, text=True, env=env, timeout=300
-        )
-        
-        raw_output = result.stdout + "\n" + result.stderr
+        # Try up to 2 times if we get a rate limit error
+        for attempt in range(2):
+            result = subprocess.run(
+                ["parliament", "ask", full_prompt],
+                capture_output=True, text=True, env=env, timeout=300
+            )
+            raw_output = result.stdout + "\n" + result.stderr
+            
+            if "Rate limit or quota exceeded" in raw_output and attempt == 0:
+                print(f"Rate limit hit (attempt {attempt+1}). Retrying in 5 seconds...")
+                import time
+                time.sleep(5)
+                continue
+            break
+            
         clean_output = clean_terminal_output(raw_output)
         
         if not clean_output.strip() or "Parliament Verdict" not in raw_output and len(clean_output) < 50:
@@ -104,15 +108,15 @@ def ask_janice(message, audio_path, history):
     except Exception as e:
         print(f"TTS Error: {e}")
 
-    history.append({"role": "user", "content": f"[{panel_name}] {message}"})
+    history.append({"role": "user", "content": message})
     history.append({"role": "assistant", "content": clean_output})
     
     return history, audio_filepath
 
-# 4. Custom Interface
+# 4. UI
 with gr.Blocks(title="Janice AI") as demo:
     gr.Markdown("# 🧠 Janice: Multi-Agent Debate Panel")
-    gr.Markdown("Type or speak your question. Janice auto-routes to the **Business Panel** or **Dev Team**.")
+    gr.Markdown("Type or speak your question. Janice uses the **NVIDIA Nemotron** panel for reliable free debates.")
     
     chatbot = gr.Chatbot(label="Janice's Deliberations", height=500)
     
