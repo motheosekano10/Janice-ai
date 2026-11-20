@@ -34,6 +34,7 @@ with open(config_path, "w") as f:
 
 # 2. Helper to clean terminal ASCII boxes
 def clean_terminal_output(raw_text):
+    # Remove box drawing characters
     cleaned = re.sub(r'[│╭╮╰╯─]', '', raw_text)
     if "Parliament Verdict" in cleaned:
         verdict_section = cleaned.split("Parliament Verdict")[-1]
@@ -41,7 +42,7 @@ def clean_terminal_output(raw_text):
         return "### 🏛️ Janice's Final Verdict\n" + verdict_section.strip()
     return cleaned
 
-# 3. Main Function (Handles Text, Voice Input, Voice Output, and Chat History)
+# 3. Main Function
 def ask_janice(message, audio_path, history):
     # Step A: Transcribe Audio
     if audio_path:
@@ -60,7 +61,7 @@ def ask_janice(message, audio_path, history):
         history.append({"role": "assistant", "content": "Please provide a question via text or microphone."})
         return history, None
 
-    # Step B: Build Context from history
+    # Step B: Build Context
     context = ""
     if history:
         context = "Previous conversation:\n"
@@ -71,15 +72,24 @@ def ask_janice(message, audio_path, history):
 
     full_prompt = f"{context}New Question: {message}" if context else message
 
-    # Step C: Run the Debate
+    # Step C: Run the Debate (Force plain text output)
     try:
         env = os.environ.copy()
+        env["TERM"] = "dumb"  # <--- CRITICAL FIX: Forces the CLI to output plain text
+        
         result = subprocess.run(
             ["parliament", "ask", full_prompt],
             capture_output=True, text=True, env=env, timeout=300
         )
-        raw_output = result.stdout if result.returncode == 0 else result.stderr
+        
+        # Capture both stdout and stderr to ensure we don't miss anything
+        raw_output = result.stdout + "\n" + result.stderr
         clean_output = clean_terminal_output(raw_output)
+        
+        # Fallback if output is empty or only whitespace
+        if not clean_output.strip() or "Parliament Verdict" not in raw_output and len(clean_output) < 50:
+            clean_output = f"⚠️ The debate engine returned an empty response. Here is the raw log:\n\n```text\n{raw_output}\n```"
+            
     except Exception as e:
         clean_output = f"**Unexpected Error:** {str(e)}"
 
@@ -107,7 +117,6 @@ with gr.Blocks(title="Janice AI") as demo:
     gr.Markdown("# 🧠 Janice: Multi-Agent Debate Panel")
     gr.Markdown("Type or speak your question. Janice has a **Business Panel** and a **Dev Team** ready to debate.")
     
-    # Removed type="messages" as it's no longer supported in Gradio 6.x
     chatbot = gr.Chatbot(label="Janice's Deliberations", height=500)
     
     with gr.Row():
@@ -122,18 +131,15 @@ with gr.Blocks(title="Janice AI") as demo:
     with gr.Row():
         audio_out = gr.Audio(label="Listen to Verdict", autoplay=True)
         
-    # Trigger function
     submit_btn.click(
         fn=ask_janice, 
         inputs=[text_in, audio_in, chatbot], 
         outputs=[chatbot, audio_out]
     )
     
-    # Clear inputs after submission
     submit_btn.click(lambda: (None, None), outputs=[text_in, audio_in])
 
 # 5. Launch
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 7860))
-    # Moved theme to launch() as required by Gradio 6.x
     demo.launch(server_name="0.0.0.0", server_port=port, theme=gr.themes.Soft())
