@@ -1,5 +1,6 @@
 gradio
-git+https://github.com/elarmuzik1993/llm-parliament.git
+zeline
+sa-tenders
 pyyaml
 gTTS
 SpeechRecognition
