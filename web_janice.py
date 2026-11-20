@@ -218,4 +218,10 @@ with gr.Blocks(title="Janice AI") as demo:
 # 7. Launch
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 7860))
-    demo.launch(server_name="0.0.0.0", server_port=port, theme=gr.themes.Soft())
+    demo.launch(
+    server_name="0.0.0.0", 
+    server_port=port, 
+    theme=gr.themes.Soft(),
+    auth=(os.environ["GRADIO_USER"], os.environ["GRADIO_PASS"]),
+    auth_message="Authorized users only"
+)
